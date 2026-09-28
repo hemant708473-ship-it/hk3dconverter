@@ -1,0 +1,6 @@
+uploads/
+└── a1b2c3d4e5f6/          ← random 12-character ID for each upload
+    ├── mymodel.fbx         ← your original file (never changed)
+    ├── meta.json           ← {"main": "mymodel.fbx"}
+    ├── preview.glb         ← made only when a preview is needed
+    └── rigged.glb          ← made only if you choose Auto Rig
