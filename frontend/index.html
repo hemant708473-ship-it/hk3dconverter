@@ -1,0 +1,156 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HK 3D Converter</title>
+<style>
+:root{--bg:#0f1216;--card:#1a1f26;--ac:#38bdf8;--mut:#93a1b1;--err:#f87171;--ok:#4ade80}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font:16px system-ui,sans-serif;padding:env(safe-area-inset-top) 0 84px}
+main{padding:16px;max-width:600px;margin:auto}h1{margin:8px 0 0}h3{margin:20px 0 8px}.mut{color:var(--mut);font-size:14px}
+button{display:block;width:100%;min-height:52px;border:0;border-radius:14px;background:var(--ac);color:#04121b;font:600 16px system-ui;margin:10px 0;padding:0 14px}
+button.alt{background:var(--card);color:#fff;border:1px solid #2b3540}button:disabled{opacity:.5}
+.row{display:flex;gap:8px}.row button{margin:8px 0;min-height:46px;font-size:14px;background:var(--card);color:#fff;border:1px solid #2b3540}
+.card{background:var(--card);border-radius:14px;padding:14px;margin:12px 0}label{display:flex;align-items:center;gap:10px;min-height:44px}
+input[type=checkbox]{width:22px;height:22px;accent-color:var(--ac)}input[type=text]{width:100%;min-height:48px;border-radius:12px;border:1px solid #2b3540;background:var(--bg);color:#fff;padding:0 12px}
+#viewer{width:100%;height:50vh;background:#0a0d10;border-radius:14px;touch-action:none;overflow:hidden}#viewer canvas{display:block}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:#12161b;border-top:1px solid #2b3540;padding-bottom:env(safe-area-inset-bottom)}
+nav a{flex:1;text-align:center;padding:14px 0;color:var(--mut);font-weight:600}nav a.on{color:var(--ac)}
+.bar{height:10px;border-radius:5px;background:var(--bg);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--ac);width:0}
+.err{color:var(--err)}.ok{color:var(--ok)}.warn{color:#fbbf24;font-size:14px}[hidden]{display:none!important}
+#toast{position:fixed;top:12px;left:12px;right:12px;background:#000c;padding:12px;border-radius:12px;z-index:9;display:none}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head><body><div id="toast"></div><main>
+
+<section id="home">
+ <h1>HK 3D Converter</h1><div class="mut">Convert, Preview &amp; Download 3D Models</div>
+ <button id="bUp" style="margin-top:20px">📁 Upload 3D Model</button>
+ <button class="alt" id="bRig">🦴 Optional Rigging</button>
+ <button class="alt" id="bSet">⚙️ Conversion Settings</button>
+ <h3>Supported formats</h3><div id="fmts" class="mut">Checking server…</div>
+ <h3>Recent converted files</h3><div id="recent" class="mut"></div>
+</section>
+
+<section id="work" hidden>
+ <div class="card" id="info"></div>
+ <div id="viewer"></div>
+ <div class="row"><button id="vReset">Reset Camera</button><button id="vFit">Fit Model</button><button id="vWire">Wireframe</button><button id="vMat">Material View</button></div>
+ <div class="card" id="rigCard"><b>Rig Model?</b>
+  <div class="row"><button id="rSkip">SKIP RIGGING</button><button id="rAuto" style="background:var(--ac);color:#04121b">AUTO RIG</button></div>
+  <div id="rigMsg" class="mut">Rigging is optional. Skipping keeps the original model unchanged.</div>
+  <button class="alt" id="rCancel" hidden>CANCEL RIGGING</button></div>
+ <div class="card" id="cvCard"><b>Convert To</b><div id="outs"></div>
+  <label><input type="checkbox" id="optim"> Optimize model</label>
+  <div class="mut">Textures, materials, animations and rigs are kept automatically when the target format supports them.</div>
+  <button id="go">CONVERT MODEL</button></div>
+ <div class="card" id="prog" hidden><div id="stage">Uploading</div><div class="bar"><i id="pbar"></i></div></div>
+ <div class="card" id="res" hidden></div>
+</section>
+
+<section id="files" hidden><h1>Files</h1><div class="mut">Converted files are saved to your device when you tap Download. Recent history:</div><div id="recent2"></div></section>
+
+<section id="settings" hidden><h1>Settings</h1>
+ <h3>Server address</h3><input type="text" id="apiBase" placeholder="http://192.168.1.10:8000 (blank = same origin)">
+ <button id="saveSet">SAVE</button><button class="alt" id="clrHist">Clear recent files</button><div id="srv" class="mut"></div></section>
+</main>
+<nav><a data-t="home" class="on">Home</a><a data-t="files">Files</a><a data-t="settings">Settings</a></nav>
+<input type="file" id="picker" multiple hidden>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+const $=id=>document.getElementById(id), api=()=>(localStorage.apiBase||'').replace(/\/$/,'');
+const S={file:null,rigged:false,caps:{outputs:[],inputs:[],can_rig:false},job:null,dl:new Set()};
+const size=b=>b>1e6?(b/1e6).toFixed(1)+' MB':Math.max(1,Math.round(b/1e3))+' KB';
+const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',3500)};
+const NET='Cannot reach the server. Check the server address in Settings.';
+const show=id=>{['home','work','files','settings'].forEach(s=>$(s).hidden=s!==id);document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.t===id||(id==='work'&&a.dataset.t==='home')));if(id==='work')resize()};
+document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>show(a.dataset.t==='home'&&S.file?'work':a.dataset.t));
+const post=async(u,b)=>{let r;try{r=await fetch(api()+u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}catch{throw new Error(NET)}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Request failed');return j};
+
+const recent=()=>JSON.parse(localStorage.recent||'[]');
+function drawRecent(){const h=recent().map(r=>`<div class="card">${r.name}<div class="mut">${r.fmt} · ${size(r.size)} · ${new Date(r.t).toLocaleString()}</div></div>`).join('')||'None yet';$('recent').innerHTML=h;$('recent2').innerHTML=h}
+$('clrHist').onclick=()=>{localStorage.recent='[]';drawRecent()};
+
+const sel=()=>[...$('outs').querySelectorAll('input:checked')].map(i=>i.value);
+async function loadCaps(){try{S.caps=await (await fetch(api()+'/api/capabilities')).json();
+ $('fmts').innerHTML=`Import: ${S.caps.inputs.join(', ').toUpperCase()||'none available'}<br>Export: ${S.caps.outputs.join(', ').toUpperCase()||'none available'}`;
+ $('srv').textContent='Server OK. Max upload '+S.caps.max_mb+' MB. Auto-rig '+(S.caps.can_rig?'available':'unavailable');
+ $('outs').innerHTML=S.caps.outputs.map(f=>`<label><input type="checkbox" value="${f}" ${f==='glb'?'checked':''}> ${f.toUpperCase()}</label>`).join('');
+ $('outs').onchange=()=>$('go').textContent=sel().length>1?'CONVERT ALL':'CONVERT MODEL'}
+ catch{$('fmts').textContent=NET;$('srv').textContent=NET}}
+
+$('bUp').onclick=()=>$('picker').click();
+$('bRig').onclick=()=>S.file?(show('work'),$('rigCard').scrollIntoView()):toast('Upload a model first');
+$('bSet').onclick=()=>S.file?(show('work'),$('cvCard').scrollIntoView()):toast('Upload a model first');
+$('picker').onchange=async e=>{const fs=[...e.target.files];e.target.value='';if(!fs.length)return;
+ show('work');$('res').hidden=true;$('info').textContent='Uploading…';$('prog').hidden=false;prog('Uploading',0);
+ try{const j=await upload(fs);S.file=j;S.rigged=false;$('prog').hidden=true;drawInfo();resetRigUI();await loadPreview(api()+'/api/preview/'+j.id)}
+ catch(err){$('prog').hidden=true;S.file=null;$('info').innerHTML=`<span class="err">${err.message}</span>`}};
+function upload(fs){return new Promise((res,rej)=>{const fd=new FormData();fs.forEach(f=>fd.append('files',f));const x=new XMLHttpRequest();
+ x.open('POST',api()+'/api/upload');x.upload.onprogress=e=>e.lengthComputable&&prog('Uploading',e.loaded/e.total*100);
+ x.onload=()=>{let j={};try{j=JSON.parse(x.responseText)}catch{}x.status<300?res(j):rej(new Error(j.detail||'Upload failed'))};
+ x.onerror=()=>rej(new Error(NET));x.send(fd)})}
+const prog=(s,p)=>{$('stage').textContent=s+' — '+Math.round(p)+'%';$('pbar').style.width=p+'%'};
+function drawInfo(){const f=S.file,v=x=>x==null?'unknown':x;
+ $('info').innerHTML=`<b>${f.name}</b><div class="mut">${size(f.size)} · ${f.format}<br>Meshes: ${v(f.meshes)} · Materials: ${v(f.materials)} · Textures: ${v(f.textures)}</div>${(f.warnings||[]).map(w=>`<div class="warn">⚠ ${w}</div>`).join('')}`}
+
+let R,scene,cam,ctl,model,helper;
+function initViewer(){if(R)return;const el=$('viewer');R=new THREE.WebGLRenderer({antialias:true});R.setPixelRatio(Math.min(devicePixelRatio,2));el.appendChild(R.domElement);
+ scene=new THREE.Scene();scene.background=new THREE.Color(0x0a0d10);cam=new THREE.PerspectiveCamera(50,1,.01,5000);
+ scene.add(new THREE.HemisphereLight(0xffffff,0x334455,1.6));const d=new THREE.DirectionalLight(0xffffff,2);d.position.set(3,5,4);scene.add(d);
+ ctl=new OrbitControls(cam,R.domElement);ctl.enableDamping=true;ctl.touches={ONE:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};ctl.screenSpacePanning=true;
+ new ResizeObserver(resize).observe(el);(function loop(){requestAnimationFrame(loop);ctl.update();R.render(scene,cam)})()}
+function resize(){if(!R)return;const el=$('viewer');if(!el.clientWidth)return;R.setSize(el.clientWidth,el.clientHeight);cam.aspect=el.clientWidth/el.clientHeight;cam.updateProjectionMatrix()}
+function fit(){if(!model)return;const b=new THREE.Box3().setFromObject(model),c=b.getCenter(new THREE.Vector3()),r=b.getSize(new THREE.Vector3()).length()/2||1;
+ const dist=r/Math.sin(cam.fov*Math.PI/360);cam.near=r/100;cam.far=r*100;cam.updateProjectionMatrix();cam.position.copy(c).add(new THREE.Vector3(.6,.4,1).normalize().multiplyScalar(dist));ctl.target.copy(c);ctl.update()}
+async function loadPreview(url,skeleton=false){initViewer();resize();
+ let r;try{r=await fetch(url)}catch{toast(NET);return false}
+ if(!r.ok){const j=await r.json().catch(()=>({}));toast(j.detail||'Preview failed');return false}
+ const buf=await r.arrayBuffer();
+ return new Promise(ok=>new GLTFLoader().parse(buf,'',g=>{if(model){scene.remove(model);model.traverse(o=>{o.geometry?.dispose();[].concat(o.material||[]).forEach(m=>m.dispose())})}
+  if(helper){scene.remove(helper);helper=null}model=g.scene;scene.add(model);
+  if(skeleton){helper=new THREE.SkeletonHelper(model);helper.material.depthTest=false;helper.renderOrder=9;scene.add(helper)}
+  fit();ok(true)},()=>{toast('This model could not be previewed.');ok(false)}))}
+const wire=w=>model&&model.traverse(o=>o.isMesh&&[].concat(o.material).forEach(m=>m.wireframe=w));
+$('vReset').onclick=fit;$('vFit').onclick=fit;$('vWire').onclick=()=>wire(true);$('vMat').onclick=()=>wire(false);
+
+function resetRigUI(){$('rCancel').hidden=true;$('rAuto').disabled=!S.caps.can_rig;
+ $('rigMsg').textContent=S.caps.can_rig?'Rigging is optional. Skipping keeps the original model unchanged.':'Auto-rigging is unavailable: the server has no Blender installed. You can still convert normally.'}
+$('rSkip').onclick=()=>{S.rigged=false;$('rigMsg').textContent='Rigging skipped. The original model will be converted unchanged.'};
+$('rAuto').onclick=async()=>{$('rigMsg').textContent='Analysing model…';$('rAuto').disabled=true;
+ try{const r=await post('/api/rig',{file_id:S.file.id});const j=await poll(r.job,j=>$('rigMsg').textContent=j.stage+'…');
+  if(!j.rig.ok){$('rigMsg').innerHTML=`<span class="err">Auto rig unavailable: ${j.rig.reason}</span>`}
+  else{await loadPreview(api()+'/api/rigged/'+S.file.id,true);S.rigged=true;$('rigMsg').innerHTML=`<span class="ok">Humanoid skeleton created (${j.rig.bones} bones, ${j.rig.pose}).</span> Skeleton preview shown; it will be used when converting.`;$('rCancel').hidden=false}}
+ catch(e){$('rigMsg').innerHTML=`<span class="err">${e.message}</span>`}$('rAuto').disabled=!S.caps.can_rig};
+$('rCancel').onclick=async()=>{await fetch(api()+'/api/rig/cancel/'+S.file.id,{method:'POST'});S.rigged=false;$('rCancel').hidden=true;$('rigMsg').textContent='Rigging cancelled. Original model kept.';loadPreview(api()+'/api/preview/'+S.file.id)};
+
+function poll(id,tick){return new Promise((res,rej)=>{const t=setInterval(async()=>{try{const j=await (await fetch(api()+'/api/job/'+id)).json();tick(j);
+ if(j.error){clearInterval(t);rej(new Error(j.error))}else if(j.done){clearInterval(t);res(j)}}catch{clearInterval(t);rej(new Error('Lost connection to the server.'))}},700)})}
+$('go').onclick=convert;
+async function convert(){const fm=sel();if(!fm.length)return toast('Choose at least one format');
+ $('res').hidden=true;$('prog').hidden=false;$('go').disabled=true;S.dl=new Set();prog('Processing',0);
+ try{const r=await post('/api/convert',{file_id:S.file.id,formats:fm,optimize:$('optim').checked,use_rig:S.rigged});
+  const j=await poll(r.job,j=>prog(j.stage,j.progress));S.job=j;done(j)}
+ catch(e){$('prog').hidden=true;$('res').hidden=false;$('res').innerHTML=`<b class="err">Conversion failed</b><div>${e.message}</div><button id="retry">TRY AGAIN</button>`;$('retry').onclick=convert}
+ $('go').disabled=false}
+function done(j){$('prog').hidden=true;const fs=Object.entries(j.files);$('res').hidden=false;
+ $('res').innerHTML=`<b class="ok">✅ Conversion Complete</b>`+fs.map(([f,x])=>`<div style="margin-top:10px">File:<br><b>"${x.name}"</b><div class="mut">Size: ${size(x.size)}</div><button data-f="${f}">${fs.length>1?'Download '+f.toUpperCase():'DOWNLOAD'}</button></div>`).join('')
+  +(fs.length>1?`<button id="dlAll">DOWNLOAD ALL (ZIP)</button>`:'')+(j.warnings||[]).map(w=>`<div class="warn">⚠ ${w}</div>`).join('')+`<button class="alt" id="another">CONVERT ANOTHER</button>`;
+ const rec=recent();fs.forEach(([f,x])=>rec.unshift({name:x.name,fmt:f.toUpperCase(),size:x.size,t:Date.now()}));localStorage.recent=JSON.stringify(rec.slice(0,30));drawRecent();
+ $('res').querySelectorAll('button[data-f]').forEach(b=>b.onclick=()=>dl(b,api()+'/api/download/'+j.id+'/'+b.dataset.f,j.files[b.dataset.f].name,b.dataset.f));
+ if($('dlAll'))$('dlAll').onclick=e=>dl(e.target,api()+'/api/zip/'+j.id,'HK3D_converted.zip','all');
+ $('another').onclick=async()=>{fetch(api()+'/api/cleanup/'+j.id,{method:'POST'});S.file=null;S.rigged=false;$('res').hidden=true;show('home')}}
+// DOWNLOAD: on Android saves to Documents/HK3D and opens the share/save sheet; in a browser it is a normal download.
+async function dl(btn,url,name,key){const t=btn.textContent;btn.disabled=true;btn.textContent='Preparing…';
+ try{const r=await fetch(url);if(!r.ok)throw new Error('Download failed. Convert again.');const b=await r.blob();const C=window.Capacitor;
+  if(C?.isNativePlatform?.()){const {Filesystem,Share}=C.Plugins;const data=await new Promise(res=>{const f=new FileReader();f.onload=()=>res(f.result.split(',')[1]);f.readAsDataURL(b)});
+   const w=await Filesystem.writeFile({path:'HK3D/'+name,data,directory:'DOCUMENTS',recursive:true});await Share.share({title:name,url:w.uri})}
+  else{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+  S.dl.add(key);if(key==='all'||S.dl.size>=Object.keys(S.job.files).length)fetch(api()+'/api/cleanup/'+S.job.id,{method:'POST'})}
+ catch(e){toast(/quota|space|storage/i.test(e.message)?'Not enough storage on this device.':(e.message||NET))}
+ btn.disabled=false;btn.textContent=t}
+
+$('apiBase').value=localStorage.apiBase||'';$('saveSet').onclick=()=>{localStorage.apiBase=$('apiBase').value.trim();loadCaps();toast('Saved')};
+drawRecent();loadCaps();
+</script></body></html>
+                                                                                                                                                                         
