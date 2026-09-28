@@ -1,0 +1,11 @@
+outputs/
+└── f7e8d9c0b1a2/              ← job ID, one per Convert click
+    ├── glb/
+    │   └── mymodel.glb
+    ├── fbx/
+    │   └── mymodel.fbx
+    ├── gltf/
+    │   ├── mymodel.gltf       ← GLTF writes several files,
+    │   ├── mymodel.bin          so the engine also builds
+    │   └── mymodel_gltf.zip     a ZIP of them
+    └── HK3D_converted.zip     ← made only when you tap DOWNLOAD ALL
